@@ -357,12 +357,55 @@ function QueryReviewSection() {
     const color = pct >= 70 ? '#ef4444' : pct >= 45 ? '#f59e0b' : '#10b981';
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-        <div style={{ width: '50px', height: '5px', background: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
+        <div style={{ width: '50px', height: '5px', background: 'var(--border)', borderRadius: '3px', overflow: 'hidden' }}>
           <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: '3px' }} />
         </div>
         <span style={{ fontSize: '0.7rem', fontWeight: 600, color }}>{pct}%</span>
       </div>
     );
+  };
+
+  const SLABadge = ({ query }) => {
+    if (!query.dueDate || ['resolved', 'closed'].includes(query.status)) return null;
+    const now = new Date();
+    const due = new Date(query.dueDate);
+    const hoursLeft = (due - now) / (1000 * 60 * 60);
+    const isOverdue = hoursLeft < 0;
+    const isUrgent = hoursLeft >= 0 && hoursLeft < 12;
+
+    let slaClass, label;
+    if (isOverdue) {
+      slaClass = 'sla-overdue';
+      label = `⚠️ Overdue by ${Math.abs(Math.round(hoursLeft))}h`;
+    } else if (isUrgent) {
+      slaClass = 'sla-warning';
+      label = `⏰ Due in ${Math.round(hoursLeft)}h`;
+    } else {
+      slaClass = 'sla-ok';
+      label = `✅ Due in ${Math.round(hoursLeft)}h`;
+    }
+
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+        <span className={`sla-badge ${slaClass}`}>
+          {label}
+        </span>
+        {query.escalationLevel > 0 && (
+          <span className="sla-badge sla-escalated">
+            🔺 Escalated L{query.escalationLevel}
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  const handleEscalate = async (id) => {
+    const reason = prompt('Escalation reason (optional):') || 'Manual escalation';
+    try {
+      await apiFetch(`/api/queries/${id}/escalate`, { method: 'POST', body: { reason } });
+      setMsg({ type: 'success', text: '🔺 Query escalated' });
+      fetchQueries();
+    } catch (err) { setMsg({ type: 'error', text: err.message }); }
   };
 
   return (
@@ -404,23 +447,40 @@ function QueryReviewSection() {
       ) : (
         <div className="card-grid" style={{ marginBottom: '1.5rem' }}>
           {pendingApproval.map(q => (
-            <div key={q._id} className="card" style={{ border: '1px solid #bfdbfe', background: '#f0f9ff' }}>
+            <div key={q._id} className="card admin-card-pending">
               <div style={{ fontWeight: 600, fontSize: '1.05rem', marginBottom: '0.4rem' }}>{q.question}</div>
               {q.description && <div style={{ fontSize: '0.88rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>{q.description}</div>}
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem', display: 'flex', flexWrap: 'wrap', gap: '0.4rem', alignItems: 'center' }}>
+              {q.screenshot && (
+                <img
+                  src={q.screenshot}
+                  alt="Query screenshot"
+                  style={{ marginBottom: '0.5rem', maxWidth: '100%', maxHeight: '200px', borderRadius: '6px', border: '1px solid var(--border)', objectFit: 'contain', cursor: 'pointer' }}
+                  onError={e => e.target.style.display = 'none'}
+                />
+              )}
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.4rem', alignItems: 'center' }}>
                 <span>
                   Raised by <strong>{typeof q.raisedBy === 'object' ? q.raisedBy?.name : (q.raisedBy || 'Unknown')}</strong>
                   {' · '}{new Date(q.createdAt).toLocaleDateString()}
                 </span>
                 <span className="tag">{categoryLabel(q.category)}</span>
               </div>
+              <SLABadge query={q} />
 
               {q.communitySolution && (
-                <div style={{ padding: '0.85rem', background: '#dbeafe', borderRadius: '8px', borderLeft: '3px solid var(--primary)', marginBottom: '1rem' }}>
-                  <div style={{ fontWeight: 600, fontSize: '0.82rem', color: '#1e40af', marginBottom: '0.3rem' }}>
+                <div className="admin-solution-box">
+                  <div className="admin-solution-title">
                     💬 Community Solution by {typeof q.solutionBy === 'object' ? q.solutionBy?.name : (q.solutionBy || 'Someone')}
                   </div>
                   <div style={{ color: 'var(--text)', lineHeight: 1.6, fontSize: '0.9rem' }}>{q.communitySolution}</div>
+                  {q.solutionScreenshot && (
+                    <img
+                      src={q.solutionScreenshot}
+                      alt="Solution screenshot"
+                      style={{ marginTop: '0.5rem', maxWidth: '100%', maxHeight: '250px', borderRadius: '6px', border: '1px solid var(--border)', objectFit: 'contain', cursor: 'pointer' }}
+                      onError={e => e.target.style.display = 'none'}
+                    />
+                  )}
                 </div>
               )}
 
@@ -475,6 +535,9 @@ function QueryReviewSection() {
                   <button className="btn btn-accent btn-sm" onClick={() => { setApprovingId(q._id); setRejectingId(null); }}>✅ Approve</button>
                   <button className="btn btn-danger btn-sm" onClick={() => startReject(q._id)}>❌ Reject</button>
                   <button className="btn btn-ghost btn-sm" onClick={() => findSimilar(q)}>🔗 Find Duplicates</button>
+                  {(!q.escalationLevel || q.escalationLevel < 3) && (
+                    <button className="btn btn-ghost btn-sm" onClick={() => handleEscalate(q._id)} style={{ color: '#f59e0b' }}>🔺 Escalate</button>
+                  )}
                   <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(q._id)}>Delete</button>
                 </div>
               )}
@@ -483,7 +546,7 @@ function QueryReviewSection() {
         </div>
       )}
 
-      <h3 style={{ fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#991b1b', marginBottom: '0.75rem', marginTop: '1.5rem' }}>
+      <h3 className="admin-escalated-section" style={{ fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--danger)', marginBottom: '0.75rem', marginTop: '1.5rem' }}>
         ❌ Rejected ({rejectedQueries.length})
       </h3>
       {rejectedQueries.length === 0 ? (
@@ -515,7 +578,7 @@ function QueryReviewSection() {
         <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem' }}>No other queries.</p>
       ) : (
         <table className="admin-table">
-          <thead><tr><th>Question</th><th>Category</th><th>Raised By</th><th>Status</th><th>Added to FAQ</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Question</th><th>Category</th><th>Raised By</th><th>Status</th><th>SLA</th><th>Added to FAQ</th><th>Actions</th></tr></thead>
           <tbody>
             {other.map(q => (
               <tr key={q._id}>
@@ -523,9 +586,13 @@ function QueryReviewSection() {
                 <td><span className="tag">{categoryLabel(q.category)}</span></td>
                 <td>{typeof q.raisedBy === 'object' ? q.raisedBy?.name : (q.raisedBy || '—')}</td>
                 <td><span className={STATUS_BADGE(q.status)}>{STATUS_LABEL(q.status)}</span></td>
+                <td><SLABadge query={q} /></td>
                 <td>{q.addedToFAQ ? '✅' : '❌'}</td>
                 <td className="actions">
                   <button className="btn btn-ghost btn-sm" onClick={() => findSimilar(q)}>🔗</button>
+                  {(!q.escalationLevel || q.escalationLevel < 3) && (
+                    <button className="btn btn-ghost btn-sm" onClick={() => handleEscalate(q._id)} style={{ color: '#f59e0b' }}>🔺</button>
+                  )}
                   <button className="btn btn-danger btn-sm" onClick={() => handleDelete(q._id)}>Delete</button>
                 </td>
               </tr>
@@ -543,7 +610,7 @@ function QueryReviewSection() {
               <h2 style={{ margin: 0, fontSize: '1.1rem' }}>Find Duplicates</h2>
             </div>
 
-            <div style={{ padding: '0.75rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid var(--border)', marginBottom: '1rem' }}>
+            <div className="admin-assigned-card">
               <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{mergeModal.question}</div>
               <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
                 Status: <span className={`status-badge ${STATUS_BADGE(mergeModal.status)}`} style={{ fontSize: '0.7rem' }}>{STATUS_LABEL(mergeModal.status)}</span>
@@ -962,7 +1029,7 @@ function CategoriesSection() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '200px', overflow: 'auto' }}>
                   {faqsInCategory.map(f => (
-                    <div key={f._id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', background: '#f0fdf4', borderRadius: '6px', border: '1px solid #bbf7d0' }}>
+                    <div key={f._id} className="admin-assigned-item">
                       <span style={{ fontSize: '0.88rem', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.question}</span>
                       <button className="btn btn-danger btn-sm" style={{ marginLeft: '0.5rem', padding: '0.2rem 0.5rem', fontSize: '0.72rem' }} onClick={() => removeFromCategory(f._id)}>✕ Remove</button>
                     </div>

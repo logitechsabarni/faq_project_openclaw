@@ -1,13 +1,21 @@
-const { Query, QUERY_CATEGORIES, QUERY_PRIORITIES, QUERY_STATUSES } = require('../models/Query');
+const { Query, QUERY_CATEGORIES, QUERY_PRIORITIES, QUERY_STATUSES, SLA_RULES } = require('../models/Query');
 const FAQ = require('../models/FAQ');
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
 const { ROLES } = require('../utils/roles');
-const { classifyQuery } = require('../utils/classifier');
-const { trigramSimilarity } = require('../utils/similarity');
-const { awardPoints } = require('../utils/reputation');
-const { getValidCategoryNames, normalizeQueryCategory } = require('../utils/queryCategories');
+const { calculateDueDate, runEscalationCheck } = require('../services/slaService');
+
+function pushHistory(query, { status, action, note = '', by = null }) {
+  if (!query.queryHistory) query.queryHistory = [];
+  query.queryHistory.push({
+    status,
+    action,
+    note,
+    by,
+    at: new Date(),
+  });
+}
 
 // @route   GET /api/queries/similar
 // @desc    Find similar FAQs and open queries for duplicate detection
@@ -84,6 +92,7 @@ exports.getQueries = asyncHandler(async (req, res) => {
     .populate('assignedTo', 'name')
     .populate('solutionBy', 'name')
     .populate('approvedBy', 'name')
+    .populate('queryHistory.by', 'name role')
     .sort({ createdAt: -1 });
 
   res.json({ success: true, count: queries.length, data: queries });
@@ -97,7 +106,8 @@ exports.getQueryById = asyncHandler(async (req, res) => {
     .populate('raisedBy', 'name email department')
     .populate('assignedTo', 'name')
     .populate('solutionBy', 'name')
-    .populate('approvedBy', 'name');
+    .populate('approvedBy', 'name')
+    .populate('queryHistory.by', 'name role');
 
   if (!query) throw ApiError.notFound('Query not found');
 
@@ -116,25 +126,29 @@ exports.raiseQuery = asyncHandler(async (req, res) => {
 
   if (!question || !question.trim()) throw ApiError.badRequest('Question is required');
 
-  const validCategories = await getValidCategoryNames();
-  const finalCategory = normalizeQueryCategory(category, validCategories);
+  const finalCategory = category || 'other';
+  const finalPriority = priority || 'medium';
 
   const screenshot = req.file ? `/uploads/${req.file.filename}` : null;
+  const dueDate = calculateDueDate(finalPriority);
 
   const query = await Query.create({
     question: question.trim(),
     description: description || '',
     category: finalCategory,
-    priority: priority || 'medium',
+    priority: finalPriority,
+    status: 'open',
     raisedBy: req.user?._id || null,
     screenshot,
+    dueDate,
+    queryHistory: [{
+      status: 'open',
+      action: 'Query raised',
+      note: 'New query submitted by user',
+      by: req.user?._id || null,
+      at: new Date(),
+    }],
   });
-
-  // Award reputation points for asking (only if logged in)
-  if (req.user?._id) {
-    const user = await User.findById(req.user._id);
-    if (user) await awardPoints(user, 'QUERY_ASKED');
-  }
 
   const populated = await Query.findById(query._id).populate('raisedBy', 'name email');
   res.status(201).json({ success: true, data: populated });
@@ -160,8 +174,25 @@ exports.submitSolution = asyncHandler(async (req, res) => {
   query.status = 'pending_approval';
   query.adminNote = '';
   query.solutionScreenshot = req.file ? `/uploads/${req.file.filename}` : null;
+  pushHistory(query, {
+    status: 'pending_approval',
+    action: 'Solution submitted',
+    note: 'Community solution submitted for admin review',
+    by: req.user?._id || null,
+  });
 
   await query.save();
+
+  if (query.raisedBy && String(query.raisedBy) !== String(req.user?._id || '')) {
+    await createNotification({
+      user: query.raisedBy,
+      type: 'query',
+      title: 'Query assigned',
+      message: 'Your query has been assigned to support staff.',
+      link: '/resolve',
+      metadata: { queryId: query._id },
+    });
+  }
 
   // Award points for submitting a solution (only if logged in)
   if (req.user?._id) {
@@ -170,7 +201,8 @@ exports.submitSolution = asyncHandler(async (req, res) => {
   }
   const populated = await Query.findById(query._id)
     .populate('raisedBy', 'name email')
-    .populate('solutionBy', 'name');
+    .populate('solutionBy', 'name')
+    .populate('queryHistory.by', 'name role');
 
   res.json({ success: true, data: populated });
 });
@@ -185,7 +217,28 @@ exports.assignQuery = asyncHandler(async (req, res) => {
 
   query.assignedTo = assignedTo || null;
   if (assignedTo && query.status === 'open') query.status = 'assigned';
+  if (assignedTo && query.status === 'assigned') {
+    pushHistory(query, {
+      status: 'assigned',
+      action: 'Query assigned',
+      note: 'Assigned to support staff',
+      by: req.user?._id || null,
+    });
+  }
   await query.save();
+
+  if (query.raisedBy) {
+    await createNotification({
+      user: query.raisedBy,
+      type: 'query',
+      title: 'Query resolved',
+      message: addToFAQ
+        ? 'Your query was approved and added to FAQ.'
+        : 'Your query was approved with a final answer.',
+      link: '/resolve',
+      metadata: { queryId: query._id },
+    });
+  }
 
   res.json({ success: true, data: query });
 });
@@ -194,7 +247,7 @@ exports.assignQuery = asyncHandler(async (req, res) => {
 // @desc    Approve solution (staff+) — optionally add to FAQ
 // @access  Private (staff+)
 exports.approveSolution = asyncHandler(async (req, res) => {
-  const { addToFAQ, faqTags, finalAnswer } = req.body;
+  const { addToFAQ, faqTags, finalAnswer, adminNote } = req.body;
 
   const query = await Query.findById(req.params.id);
   if (!query) throw ApiError.notFound('Query not found');
@@ -220,6 +273,7 @@ exports.approveSolution = asyncHandler(async (req, res) => {
       answer: answerText,
       category: query.category,
       tags,
+      screenshot: query.solutionScreenshot || null,
       status: 'published',
       createdBy: req.user._id,
       reviewedBy: req.user._id,
@@ -227,8 +281,27 @@ exports.approveSolution = asyncHandler(async (req, res) => {
     });
     query.addedToFAQ = true;
   }
+  pushHistory(query, {
+    status: 'resolved',
+    action: addToFAQ ? 'Solution approved and added to FAQ' : 'Solution approved',
+    note: adminNote || '',
+    by: req.user?._id || null,
+  });
 
   await query.save();
+
+  if (query.raisedBy) {
+    await createNotification({
+      user: query.raisedBy,
+      type: 'query',
+      title: 'Solution approved',
+      message: adminNote
+        ? `Admin feedback: ${adminNote}`
+        : 'Your submitted solution was approved.',
+      link: '/resolve',
+      metadata: { queryId: query._id },
+    });
+  }
 
   // Award SOLUTION_APPROVED to the person who submitted the solution
   if (query.solutionBy) {
@@ -255,12 +328,19 @@ exports.rejectSolution = asyncHandler(async (req, res) => {
   query.solutionBy = null;
   query.solutionSubmittedAt = null;
   query.solutionScreenshot = null;
+  pushHistory(query, {
+    status: 'rejected',
+    action: 'Solution rejected',
+    note: adminNote || '',
+    by: req.user?._id || null,
+  });
 
   await query.save();
 
   const populated = await Query.findById(query._id)
     .populate('raisedBy', 'name email')
-    .populate('solutionBy', 'name');
+    .populate('solutionBy', 'name')
+    .populate('queryHistory.by', 'name role');
 
   res.json({ success: true, message: 'Solution rejected.', data: populated });
 });
@@ -281,7 +361,24 @@ exports.closeQuery = asyncHandler(async (req, res) => {
   }
 
   query.status = 'closed';
+  pushHistory(query, {
+    status: 'closed',
+    action: 'Query closed',
+    note: 'Closed by user/staff',
+    by: req.user?._id || null,
+  });
   await query.save();
+
+  if (query.raisedBy && String(query.raisedBy) !== String(req.user?._id || '')) {
+    await createNotification({
+      user: query.raisedBy,
+      type: 'query',
+      title: 'Query closed',
+      message: 'Your query has been closed by support staff.',
+      link: '/resolve',
+      metadata: { queryId: query._id },
+    });
+  }
   res.json({ success: true, data: query });
 });
 
@@ -291,4 +388,65 @@ exports.closeQuery = asyncHandler(async (req, res) => {
 exports.deleteQuery = asyncHandler(async (req, res) => {
   await Query.findByIdAndDelete(req.params.id);
   res.json({ success: true, message: 'Query deleted' });
+});
+
+// @route   GET /api/queries/sla/escalated
+// @desc    Get escalated queries
+// @access  Private (staff+)
+exports.getEscalatedQueries = asyncHandler(async (req, res) => {
+  const queries = await Query.find({
+    escalationLevel: { $gt: 0 },
+    status: { $nin: ['resolved', 'closed'] },
+  })
+    .populate('raisedBy', 'name email')
+    .populate('assignedTo', 'name')
+    .populate('escalationHistory.escalatedTo', 'name')
+    .sort({ escalationLevel: -1, createdAt: 1 });
+
+  res.json({ success: true, count: queries.length, data: queries });
+});
+
+// @route   POST /api/queries/:id/escalate
+// @desc    Manually escalate a query
+// @access  Private (staff+)
+exports.escalateQuery = asyncHandler(async (req, res) => {
+  const query = await Query.findById(req.params.id);
+  if (!query) throw ApiError.notFound('Query not found');
+  if (['resolved', 'closed'].includes(query.status)) {
+    throw ApiError.badRequest('Cannot escalate a resolved/closed query');
+  }
+  if (query.escalationLevel >= 3) {
+    throw ApiError.badRequest('Query already at maximum escalation level');
+  }
+
+  const { reason } = req.body;
+  const newLevel = query.escalationLevel + 1;
+  const admin = await User.findOne({ role: ROLES.ADMIN, isActive: true });
+
+  query.escalationLevel = newLevel;
+  query.lastEscalatedAt = new Date();
+  query.escalationHistory.push({
+    level: newLevel,
+    escalatedTo: admin?._id,
+    reason: reason || `Manually escalated by staff`,
+    at: new Date(),
+  });
+
+  pushHistory(query, {
+    status: query.status,
+    action: 'escalated',
+    note: reason || `Manually escalated to level ${newLevel}`,
+    by: req.user?._id || null,
+  });
+
+  await query.save();
+  res.json({ success: true, data: query });
+});
+
+// @route   POST /api/queries/sla/check
+// @desc    Trigger manual SLA check
+// @access  Private (admin only)
+exports.triggerSLACheck = asyncHandler(async (req, res) => {
+  const escalatedCount = await runEscalationCheck();
+  res.json({ success: true, message: `SLA check complete. ${escalatedCount} query(ies) escalated.`, data: { escalatedCount } });
 });

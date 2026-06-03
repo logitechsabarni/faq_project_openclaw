@@ -31,6 +31,12 @@ const STATUS_CLASS = {
   rejected: 'status-rejected',
 };
 
+function formatTimelineTime(value) {
+  if (!value) return '';
+  const dt = new Date(value);
+  return `${dt.toLocaleDateString()} ${dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
 export default function QueryResolvePage() {
   const [queries, setQueries] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -42,6 +48,7 @@ export default function QueryResolvePage() {
   const [msg, setMsg] = useState(null);
   const [openDiscussions, setOpenDiscussions] = useState({});
   const [currentUser, setCurrentUser] = useState(null);
+  const [lightboxImage, setLightboxImage] = useState(null);
   const fileRef = useRef(null);
 
   useEffect(() => {
@@ -60,6 +67,11 @@ export default function QueryResolvePage() {
     const c = categories.find(x => x.name === name);
     return c ? `${c.icon || ''} ${c.displayName}`.trim() : name;
   };
+
+  const getTimeline = (q) =>
+    [...(q.queryHistory || [])]
+      .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0))
+      .slice(0, 5);
 
   const fetchQueries = async () => {
     const token = getToken();
@@ -175,6 +187,15 @@ export default function QueryResolvePage() {
                         {q.priority === 'urgent' ? '🔥 Urgent' : q.priority}
                       </span>
                     )}
+                    {q.dueDate && !['resolved', 'closed'].includes(q.status) && (() => {
+                      const hoursLeft = (new Date(q.dueDate) - new Date()) / (1000 * 60 * 60);
+                      if (hoursLeft < 0) return <span className="sla-badge sla-overdue">⚠️ Overdue</span>;
+                      if (hoursLeft < 12) return <span className="sla-badge sla-warning">⏰ Due soon</span>;
+                      return null;
+                    })()}
+                    {q.escalationLevel > 0 && (
+                      <span className="sla-badge sla-escalated">🔺 Escalated</span>
+                    )}
                   </div>
                 </div>
                 {/* Discussion toggle */}
@@ -200,7 +221,8 @@ export default function QueryResolvePage() {
                   <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginRight: '0.4rem' }}>📷 Screenshot:</span>
                   <img
                     src={q.screenshot} alt="Query screenshot"
-                    style={{ height: '80px', borderRadius: '6px', border: '1px solid var(--border)', objectFit: 'cover', display: 'block', marginTop: '0.3rem', maxWidth: '200px' }}
+                    style={{ height: '80px', borderRadius: '6px', border: '1px solid var(--border)', objectFit: 'cover', display: 'block', marginTop: '0.3rem', maxWidth: '200px', cursor: 'pointer' }}
+                    onClick={() => setLightboxImage(q.screenshot)}
                     onError={e => e.target.style.display = 'none'}
                   />
                 </div>
@@ -208,14 +230,15 @@ export default function QueryResolvePage() {
 
               {/* Community solution (pending approval) */}
               {q.status === 'pending_approval' && q.communitySolution && (
-                <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#eff6ff', borderRadius: '8px', borderLeft: '3px solid #3b82f6' }}>
-                  <div style={{ fontWeight: 600, fontSize: '0.88rem', color: '#1e40af' }}>💬 Community Solution</div>
+                <div className="solution-pending" style={{ marginTop: '0.75rem' }}>
+                  <div className="solution-pending-title">💬 Community Solution</div>
                   <div style={{ marginTop: '0.5rem', color: 'var(--text)', lineHeight: 1.6, fontSize: '0.9rem' }}>
                     {q.communitySolution}
                   </div>
                   {q.solutionScreenshot && (
                     <img src={q.solutionScreenshot} alt="Solution screenshot"
-                      style={{ height: '80px', borderRadius: '6px', border: '1px solid var(--border)', objectFit: 'cover', marginTop: '0.5rem', maxWidth: '180px', display: 'block' }}
+                      style={{ height: '80px', borderRadius: '6px', border: '1px solid var(--border)', objectFit: 'cover', marginTop: '0.5rem', maxWidth: '180px', display: 'block', cursor: 'pointer' }}
+                      onClick={() => setLightboxImage(q.solutionScreenshot)}
                       onError={e => e.target.style.display = 'none'} />
                   )}
                   <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
@@ -226,16 +249,41 @@ export default function QueryResolvePage() {
 
               {/* Resolved final answer */}
               {q.status === 'resolved' && q.finalAnswer && (
-                <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#f0fdf4', borderRadius: '8px', borderLeft: '3px solid #10b981' }}>
-                  <div style={{ fontWeight: 600, fontSize: '0.88rem', color: '#065f46' }}>✅ Final Answer</div>
+                <div className="solution-resolved" style={{ marginTop: '0.75rem' }}>
+                  <div className="solution-resolved-title">✅ Final Answer</div>
                   <div style={{ marginTop: '0.5rem', color: 'var(--text)', lineHeight: 1.6, fontSize: '0.9rem' }}>{q.finalAnswer}</div>
+                  {q.solutionScreenshot && (
+                    <img src={q.solutionScreenshot} alt="Solution screenshot"
+                      style={{ marginTop: '0.5rem', maxWidth: '100%', maxHeight: '250px', borderRadius: '6px', border: '1px solid var(--border)', objectFit: 'contain', cursor: 'pointer', display: 'block' }}
+                      onClick={() => setLightboxImage(q.solutionScreenshot)}
+                      onError={e => e.target.style.display = 'none'} />
+                  )}
                 </div>
               )}
 
               {/* Admin note */}
               {q.status === 'rejected' && q.adminNote && (
-                <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#fee2e2', borderRadius: '8px', fontSize: '0.88rem', color: '#991b1b' }}>
+                <div className="solution-rejected" style={{ marginTop: '0.75rem' }}>
                   <strong>Admin note:</strong> {q.adminNote}
+                </div>
+              )}
+
+              {/* Status timeline */}
+              {getTimeline(q).length > 0 && (
+                <div style={{ marginTop: '0.85rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '0.76rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: '0.45rem' }}>
+                    Timeline
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.32rem' }}>
+                    {getTimeline(q).map((h, idx) => (
+                      <div key={`${q._id}-h-${idx}`} style={{ fontSize: '0.79rem', color: 'var(--text-muted)' }}>
+                        <span style={{ color: 'var(--text)' }}>{h.action || STATUS_LABEL[h.status] || h.status}</span>
+                        {h.by?.name ? ` · ${h.by.name}` : ''}
+                        {h.note ? ` · ${h.note}` : ''}
+                        {h.at ? ` · ${formatTimelineTime(h.at)}` : ''}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -306,6 +354,35 @@ export default function QueryResolvePage() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {lightboxImage && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.85)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', padding: '2rem',
+          }}
+          onClick={() => setLightboxImage(null)}
+        >
+          <img
+            src={lightboxImage}
+            alt="Enlarged screenshot"
+            style={{ maxWidth: '90vw', maxHeight: '90vh', borderRadius: '8px', objectFit: 'contain', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
+          />
+          <button
+            style={{
+              position: 'absolute', top: '1rem', right: '1rem',
+              background: 'rgba(255,255,255,0.9)', border: 'none', borderRadius: '50%',
+              width: '2.5rem', height: '2.5rem', fontSize: '1.2rem', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+            onClick={() => setLightboxImage(null)}
+            aria-label="Close"
+          >
+            ✕
+          </button>
         </div>
       )}
     </div>

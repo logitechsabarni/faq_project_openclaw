@@ -5,7 +5,7 @@ const {
   voteFAQ, removeVote, getMyVote, getCategories, assignFAQsToCategory,
   rateFAQ, getTopRated, getTopFAQs,
 } = require('../controllers/faqController');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, optionalAuth } = require('../middleware/auth');
 const { staffOrAdmin } = require('../middleware/roleGuard');
 const validate = require('../middleware/validate');
 const { body } = require('express-validator');
@@ -33,11 +33,11 @@ router.put('/:id', authenticate, staffOrAdmin, upload.single('screenshot'), [
 
 router.delete('/:id', authenticate, staffOrAdmin, deleteFAQ);
 
-router.post('/:id/vote', authenticate, [
+router.post('/:id/vote', optionalAuth, [
   body('vote').isIn(['helpful', 'not_helpful']).withMessage('Vote must be "helpful" or "not_helpful"'),
 ], validate, voteFAQ);
 
-router.delete('/:id/vote', authenticate, removeVote);
+router.delete('/:id/vote', optionalAuth, removeVote);
 
 router.post('/:id/rate', authenticate, [
   body('score').isInt({ min: 1, max: 5 }).withMessage('Rating must be 1-5'),

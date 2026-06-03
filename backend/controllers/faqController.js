@@ -133,16 +133,27 @@ exports.voteFAQ = asyncHandler(async (req, res) => {
   if (!faq) throw ApiError.notFound('FAQ not found');
   if (faq.status !== 'published') throw ApiError.badRequest('Can only vote on published FAQs');
 
+  // Anonymous users: just increment/decrement without tracking individual votes
+  if (!req.user) {
+    if (vote === 'helpful') faq.helpful += 1;
+    else faq.notHelpful += 1;
+    await faq.save();
+    topFaqsCache.data = null;
+    return res.json({
+      success: true,
+      data: { helpful: faq.helpful, notHelpful: faq.notHelpful, myVote: vote },
+    });
+  }
+
+  // Logged-in users: track individual votes for toggle/switch behavior
   const existingVote = await FAQVote.findOne({ faqId: faq._id, userId: req.user._id });
 
   if (existingVote) {
     if (existingVote.vote === vote) {
-      // Toggle off
       await FAQVote.deleteOne({ _id: existingVote._id });
       if (vote === 'helpful') faq.helpful = Math.max(0, faq.helpful - 1);
       else faq.notHelpful = Math.max(0, faq.notHelpful - 1);
     } else {
-      // Switch vote
       if (existingVote.vote === 'helpful') {
         faq.helpful = Math.max(0, faq.helpful - 1);
         faq.notHelpful += 1;
@@ -154,7 +165,6 @@ exports.voteFAQ = asyncHandler(async (req, res) => {
       await existingVote.save();
     }
   } else {
-    // New vote
     await FAQVote.create({ faqId: faq._id, userId: req.user._id, vote });
     if (vote === 'helpful') faq.helpful += 1;
     else faq.notHelpful += 1;
@@ -162,10 +172,8 @@ exports.voteFAQ = asyncHandler(async (req, res) => {
 
   await faq.save();
 
-  // Invalidate top FAQs cache whenever a vote changes
   topFaqsCache.data = null;
 
-  // Award points to FAQ author
   if (vote === 'helpful' && faq.createdBy) {
     await awardPoints(await User.findById(faq.createdBy), 'FAQ_HELPFUL_VOTE');
   }
@@ -173,7 +181,7 @@ exports.voteFAQ = asyncHandler(async (req, res) => {
   const myVote = await FAQVote.findOne({ faqId: faq._id, userId: req.user._id });
   res.json({
     success: true,
-    data: { helpful: faq.helpful, notHelpful: faq.notHelpful, myVote: myVote ? myVote.vote : null },
+    data: { helpful: faq.helpful, notHelpful: faq.notHelpful, myVote: myVote ? myVote.vote : vote },
   });
 });
 
@@ -181,6 +189,10 @@ exports.voteFAQ = asyncHandler(async (req, res) => {
 exports.removeVote = asyncHandler(async (req, res) => {
   const faq = await FAQ.findById(req.params.id);
   if (!faq) throw ApiError.notFound('FAQ not found');
+
+  if (!req.user) {
+    throw ApiError.unauthorized('Login required to remove vote');
+  }
 
   const existingVote = await FAQVote.findOne({ faqId: faq._id, userId: req.user._id });
   if (!existingVote) throw ApiError.notFound('You have not voted on this FAQ');
@@ -219,7 +231,7 @@ exports.getTopFAQs = asyncHandler(async (req, res) => {
   if (category && category !== 'all') filter.category = category;
 
   const faqs = await FAQ.find(filter)
-    .select('question answer category tags helpful notHelpful viewCount')
+    .select('question answer category tags helpful notHelpful viewCount screenshot averageRating ratingCount createdBy')
     .sort({ helpful: -1, viewCount: -1 })
     .limit(limit * 3)
     .lean();

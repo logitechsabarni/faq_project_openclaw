@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, NavLink, Navigate, useNavigate } from 're
 import { useState, useEffect, createContext, useContext } from 'react';
 import { AuthProvider, useAuth } from './pages/LoginPage';
 import { ToastProvider } from './components/common/Toast';
+import NotificationBell from './components/common/NotificationBell';
 import FAQPage from './pages/FAQPage';
 import RaiseQueryPage from './pages/RaiseQueryPage';
 import QueryResolvePage from './pages/QueryResolvePage';
@@ -90,6 +91,7 @@ function NavBar() {
       </form>
 
       {/* Theme toggle */}
+      <NotificationBell />
       <button
         className="theme-toggle"
         onClick={toggle}

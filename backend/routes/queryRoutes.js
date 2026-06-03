@@ -4,6 +4,7 @@ const {
   getQueries, getQueryById, raiseQuery, submitSolution,
   assignQuery, approveSolution, rejectSolution, closeQuery, deleteQuery,
   getSimilarQueries, classifyQuery,
+  getEscalatedQueries, escalateQuery, triggerSLACheck,
 } = require('../controllers/queryController');
 const { authenticate, optionalAuth } = require('../middleware/auth');
 const { staffOrAdmin } = require('../middleware/roleGuard');
@@ -14,6 +15,8 @@ const { raiseQueryValidation, handleValidationErrors } = require('../middleware/
 
 router.get('/similar', optionalAuth, getSimilarQueries);
 router.post('/classify', optionalAuth, classifyQuery);
+router.get('/sla/escalated', authenticate, staffOrAdmin, getEscalatedQueries);
+router.post('/sla/check', authenticate, staffOrAdmin, triggerSLACheck);
 
 router.get('/', optionalAuth, getQueries);
 router.get('/:id', optionalAuth, getQueryById);
@@ -36,6 +39,7 @@ router.put('/:id/reject', authenticate, staffOrAdmin, [
 ], validate, rejectSolution);
 
 router.put('/:id/close', authenticate, closeQuery);
+router.post('/:id/escalate', authenticate, staffOrAdmin, escalateQuery);
 router.delete('/:id', authenticate, staffOrAdmin, deleteQuery);
 
 module.exports = router;

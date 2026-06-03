@@ -1,6 +1,8 @@
 const Announcement = require('../models/Announcement');
+const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
+const { createNotificationsBulk } = require('../utils/notifications');
 
 // @route   GET /api/announcements
 // @desc    Get active announcements
@@ -31,6 +33,20 @@ exports.createAnnouncement = asyncHandler(async (req, res) => {
     expiresAt: expiresAt || null,
     createdBy: req.user._id,
   });
+
+  const users = await User.find({ isActive: true }).select('_id').lean();
+  if (users.length) {
+    await createNotificationsBulk(
+      users.map((u) => ({
+        user: u._id,
+        type: 'announcement',
+        title: `New announcement: ${title}`,
+        message: content,
+        link: '/resolve',
+        metadata: { announcementId: announcement._id },
+      }))
+    );
+  }
 
   res.status(201).json({ success: true, data: announcement });
 });

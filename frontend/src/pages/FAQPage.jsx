@@ -18,7 +18,7 @@ const SORT_OPTIONS = [
 
 function VoteButtons({ faqId, helpful, notHelpful, myVote, onVote }) {
   return (
-    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
       <button
         className={`btn btn-ghost btn-sm ${myVote === 'helpful' ? 'voted-helpful' : ''}`}
         onClick={e => { e.stopPropagation(); onVote(faqId, 'helpful'); }}
@@ -41,7 +41,7 @@ function VoteButtons({ faqId, helpful, notHelpful, myVote, onVote }) {
   );
 }
 
-function FAQCard({ faq, isExpanded, onToggle, onVote, userVote, categoryLabel }) {
+function FAQCard({ faq, isExpanded, onToggle, onVote, userVote, categoryLabel, onImageClick }) {
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
@@ -86,6 +86,17 @@ function FAQCard({ faq, isExpanded, onToggle, onVote, userVote, categoryLabel })
             }}>
               {faq.answer}
             </div>
+            {faq.screenshot && (
+              <div style={{ marginLeft: '1.7rem', marginBottom: '0.75rem' }}>
+                <img
+                  src={faq.screenshot}
+                  alt="FAQ screenshot"
+                  style={{ maxWidth: '100%', maxHeight: '300px', borderRadius: '8px', border: '1px solid var(--border)', objectFit: 'contain', cursor: 'pointer' }}
+                  onClick={e => { e.stopPropagation(); onImageClick?.(faq.screenshot); }}
+                  onError={e => { e.target.style.display = 'none'; }}
+                />
+              </div>
+            )}
             <div className="faq-tags">
               {(faq.tags || []).map(t => <span key={t} className="tag">{t}</span>)}
               <span style={{ marginLeft: 'auto', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
@@ -141,6 +152,7 @@ export default function FAQPage() {
   const [expandedId, setExpandedId] = useState(null);
   const [userVotes, setUserVotes] = useState({});
   const [sort, setSort] = useState('helpful');
+  const [lightboxImage, setLightboxImage] = useState(null);
   const searchTimer = useRef(null);
 
   useEffect(() => {
@@ -203,28 +215,32 @@ export default function FAQPage() {
 
   const handleVote = async (faqId, vote) => {
     const token = getToken();
-    if (!token) return;
-
     const prev = userVotes[faqId] || null;
-    setFaqs(prevList => prevList.map(f => {
-      if (f._id !== faqId) return f;
-      let { helpful, notHelpful } = f;
-      if (prev === 'helpful') helpful = Math.max(0, helpful - 1);
-      if (prev === 'not_helpful') notHelpful = Math.max(0, notHelpful - 1);
-      if (vote === 'helpful') helpful += 1;
-      if (vote === 'not_helpful') notHelpful += 1;
-      return { ...f, helpful, notHelpful };
-    }));
 
     let actualVote = null;
     if (prev === vote) actualVote = null;
     else actualVote = vote;
 
+    // Optimistic update
+    setFaqs(prevList => prevList.map(f => {
+      if (f._id !== faqId) return f;
+      let { helpful, notHelpful } = f;
+      if (prev === 'helpful') helpful = Math.max(0, helpful - 1);
+      if (prev === 'not_helpful') notHelpful = Math.max(0, notHelpful - 1);
+      if (actualVote === 'helpful') helpful += 1;
+      if (actualVote === 'not_helpful') notHelpful += 1;
+      return { ...f, helpful, notHelpful };
+    }));
+    setUserVotes(prev => ({ ...prev, [faqId]: actualVote }));
+
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+
       if (actualVote) {
         const res = await fetch(`${API}/${faqId}/vote`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          headers,
           body: JSON.stringify({ vote: actualVote }),
         });
         const data = await res.json();
@@ -233,7 +249,7 @@ export default function FAQPage() {
           setUserVotes(prev => ({ ...prev, [faqId]: data.data.myVote || actualVote }));
         }
       } else {
-        await fetch(`${API}/${faqId}/vote`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+        await fetch(`${API}/${faqId}/vote`, { method: 'DELETE', headers });
         setUserVotes(prev => ({ ...prev, [faqId]: null }));
       }
     } catch {
@@ -349,11 +365,41 @@ export default function FAQPage() {
                 onVote={handleVote}
                 userVote={userVotes[faq._id]}
                 categoryLabel={categoryLabel}
+                onImageClick={setLightboxImage}
               />
             ))}
           </div>
         )}
       </section>
+
+      {lightboxImage && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.85)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', padding: '2rem',
+          }}
+          onClick={() => setLightboxImage(null)}
+        >
+          <img
+            src={lightboxImage}
+            alt="Enlarged screenshot"
+            style={{ maxWidth: '90vw', maxHeight: '90vh', borderRadius: '8px', objectFit: 'contain', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
+          />
+          <button
+            style={{
+              position: 'absolute', top: '1rem', right: '1rem',
+              background: 'rgba(255,255,255,0.9)', border: 'none', borderRadius: '50%',
+              width: '2.5rem', height: '2.5rem', fontSize: '1.2rem', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+            onClick={() => setLightboxImage(null)}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }

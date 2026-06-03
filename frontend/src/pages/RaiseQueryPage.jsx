@@ -9,7 +9,7 @@ function SimilarityBar({ score }) {
   const color = pct >= 70 ? '#ef4444' : pct >= 45 ? '#f59e0b' : '#10b981';
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-      <div style={{ width: '60px', height: '6px', background: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
+      <div style={{ width: '60px', height: '6px', background: 'var(--border)', borderRadius: '3px', overflow: 'hidden' }}>
         <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: '3px', transition: 'width 0.2s' }} />
       </div>
       <span style={{ fontSize: '0.72rem', fontWeight: 600, color }}>{pct}% match</span>
@@ -299,7 +299,7 @@ export default function RaiseQueryPage() {
 
               {/* Client-side validation errors */}
               {clientErrors.length > 0 && (
-                <div role="alert" style={{ color: '#ef4444', fontSize: '0.8rem', marginTop: '4px' }}>
+                <div role="alert" style={{ color: 'var(--danger)', fontSize: '0.8rem', marginTop: '4px' }}>
                   {clientErrors[0]}
                 </div>
               )}
@@ -377,9 +377,9 @@ export default function RaiseQueryPage() {
                       type="button"
                       onClick={applyAutoCategory}
                       title="Click to apply this category"
+                      className="faq-highlight"
                       style={{
                         position: 'absolute', right: '-4px', top: '-10px',
-                        background: '#dbeafe', color: '#1d4ed8', border: '1px solid #93c5fd',
                         borderRadius: '20px', padding: '1px 8px', fontSize: '0.7rem',
                         cursor: 'pointer', whiteSpace: 'nowrap',
                       }}
@@ -481,7 +481,7 @@ export default function RaiseQueryPage() {
                 </h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                   {similarResults.similarFAQs.map(faq => (
-                    <div key={faq._id} style={{ padding: '0.75rem', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #bbf7d0' }}>
+                    <div key={faq._id} className="faq-similar-item">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{faq.question}</div>
@@ -491,7 +491,7 @@ export default function RaiseQueryPage() {
                       </div>
                       <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.4rem', alignItems: 'center' }}>
                         {faq.category && <span className="tag" style={{ fontSize: '0.7rem' }}>{faq.category}</span>}
-                        {faq.averageRating > 0 && <span style={{ fontSize: '0.75rem', color: '#f59e0b' }}>★ {faq.averageRating.toFixed(1)}</span>}
+                        {faq.averageRating > 0 && <span style={{ fontSize: '0.75rem', color: 'var(--warning)' }}>★ {faq.averageRating.toFixed(1)}</span>}
                         <a href={`/?faq=${faq._id}`} target="_blank" rel="noopener" className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', padding: '0.15rem 0.5rem', fontSize: '0.72rem' }}>View FAQ →</a>
                       </div>
                     </div>
@@ -502,12 +502,12 @@ export default function RaiseQueryPage() {
 
             {similarResults.similarQueries?.length > 0 && (
               <div style={{ marginBottom: '1rem' }}>
-                <h3 style={{ fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#f59e0b', marginBottom: '0.5rem' }}>
+                <h3 style={{ fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--warning)', marginBottom: '0.5rem' }}>
                   🔴 Similar Open Queries ({similarResults.similarQueries.length})
                 </h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                   {similarResults.similarQueries.map(q => (
-                    <div key={q._id} style={{ padding: '0.75rem', background: '#fffbeb', borderRadius: '8px', border: '1px solid #fde68a' }}>
+                    <div key={q._id} className="open-query-item">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{q.question}</div>
